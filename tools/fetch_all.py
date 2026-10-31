@@ -10,10 +10,12 @@
 실행 (저장소 최상위에서):
     python tools/fetch_all.py
     python tools/fetch_all.py --force
+    python tools/fetch_all.py --holidays   (공휴일만 받는다)
 """
 from __future__ import annotations
 
 import http.client
+import json
 import sys
 import time
 import urllib.error
@@ -126,8 +128,15 @@ SOURCES: list[tuple[str, str, str]] = [
      "&minlongitude=124&maxlongitude=132&limit=20000"),
 ]
 
+# 공휴일은 나라 · 연도마다 주소가 따로라 SOURCES 의 '파일 하나 = 주소 하나'에 맞지 않는다.
+# 받은 응답을 고치지 않고 한 파일에 모은다.
+NAGER = "https://date.nager.at/api/v3"
+HOLIDAY_FILE = "nager_holidays.json"
+HOLIDAY_ALL_YEAR = 2024                     # 전체 나라는 이 해만
+HOLIDAY_KR_YEARS = range(2015, 2024)        # 한국은 이 해들도 더 받는다
 
-def get(url: str, dest: Path, tries: int = 4) -> int:
+
+def fetch(url: str, tries: int = 4) -> bytes:
     """받는다. 잠깐의 실패면 기다렸다가 다시 시도한다.
 
     공개 API 는 대부분 호출 제한이 있고(429), 큰 파일은 받다가 끊기기도 한다
@@ -139,9 +148,7 @@ def get(url: str, dest: Path, tries: int = 4) -> int:
         try:
             req = urllib.request.Request(url, headers=UA)
             with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
-                data = r.read()
-            dest.write_bytes(data)
-            return len(data)
+                return r.read()
         except urllib.error.HTTPError as e:
             if (e.code != 429 and e.code < 500) or i == tries - 1:
                 raise
@@ -150,15 +157,67 @@ def get(url: str, dest: Path, tries: int = 4) -> int:
             if i == tries - 1:
                 raise
             why = type(e).__name__
-        print(f"          {why} — {wait}초 뒤 다시 시도합니다 ({i+1}/{tries-1})")
+        print(f"          {why} — {wait}초 뒤 다시 시도합니다 ({i+1}/{tries-1})", flush=True)
         time.sleep(wait)
         wait *= 2
     raise RuntimeError("도달 불가")
 
 
+def get(url: str, dest: Path, tries: int = 4) -> int:
+    data = fetch(url, tries)
+    dest.write_bytes(data)
+    return len(data)
+
+
+def fetch_holidays(force: bool) -> int:
+    """전체 나라의 2024년과 한국의 2015~2023년 공휴일을 받아 한 파일에 모은다.
+
+    나라 하나가 끝날 때마다 저장하므로, 끊겨도 다시 돌리면 받은 것은 건너뛰고 이어 받는다.
+    못 받은 나라 · 연도는 missing 에 남기고, 다음 실행에서 다시 시도한다.
+    """
+    dest = RAW / HOLIDAY_FILE
+    saved = json.loads(dest.read_text(encoding="utf-8")) if dest.exists() and not force else {}
+    countries = saved.get("countries") or json.loads(fetch(f"{NAGER}/AvailableCountries"))
+    holidays: dict[str, dict[str, list]] = saved.get("holidays", {})
+    missing: list[dict] = []
+
+    def save() -> None:
+        # 임시 파일에 다 쓴 뒤 바꿔치기한다. 쓰다가 끊겨도 앞서 저장한 파일이 망가지지 않는다
+        tmp = dest.with_suffix(".tmp")
+        tmp.write_text(json.dumps(
+            {"source": NAGER, "countries": countries, "holidays": holidays, "missing": missing},
+            ensure_ascii=False), encoding="utf-8")
+        tmp.replace(dest)
+
+    for n, c in enumerate(countries, 1):
+        code = c["countryCode"]
+        got = holidays.setdefault(code, {})
+        years = [*HOLIDAY_KR_YEARS, HOLIDAY_ALL_YEAR] if code == "KR" else [HOLIDAY_ALL_YEAR]
+        todo = [y for y in years if str(y) not in got]
+        for year in todo:
+            try:
+                body = fetch(f"{NAGER}/PublicHolidays/{year}/{code}")
+                if body.strip():
+                    got[str(year)] = json.loads(body)
+                else:
+                    missing.append({"country": code, "year": year, "why": "빈 응답"})
+            except (urllib.error.URLError, TimeoutError, ConnectionError,
+                    http.client.IncompleteRead, json.JSONDecodeError) as e:
+                missing.append({"country": code, "year": year, "why": str(e)})
+            time.sleep(0.05)     # 상대 서버에 예의를 지킨다
+        if todo:
+            save()
+        print(f"          {n}/{len(countries)} {code} {'받음' if todo else '건너뜀 (이미 있음)'}", flush=True)
+    save()
+    print(f"  받음    {HOLIDAY_FILE:<22} {dest.stat().st_size/1024:>7,.0f}KB  못 받은 건 {len(missing)}건")
+    return 0
+
+
 def main() -> int:
     force = "--force" in sys.argv
     RAW.mkdir(parents=True, exist_ok=True)
+    if "--holidays" in sys.argv:
+        return fetch_holidays(force)
     fail = 0
     for name, desc, url in SOURCES:
         dest = RAW / name

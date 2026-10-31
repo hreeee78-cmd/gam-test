@@ -701,6 +701,86 @@ topic(
            "기상청이 재는 적설(쌓인 깊이)과는 다른 값이고, 흩날린 눈은 관측과 "
            "다르게 잡힙니다.")
 
+# ── 12. 공휴일 ───────────────────────────────────────────────────
+# 전국 공휴일은 global 이 true 이고 types 에 Public 이 있는 항목. 같은 곳의 같은 날짜는
+# 한 번만 센다. global 만 보면 기념일(Observance)까지 들어가 라트비아가 47일이 된다
+HOL_RULE = "Public 표시 기준"
+_h = load_json("nager_holidays.json")
+HOL = _h["holidays"]
+# 한계 문장에 나라 이름을 적어 두었다. 못 받은 곳이 달라지면 문장도 고치라고 멈춘다
+HOL_MISS = sorted(m["country"] for m in _h["missing"] if m["year"] == 2024)
+assert HOL_MISS == ["GD", "GY", "SY", "ZA"], f"한계 문장을 고치세요: {HOL_MISS}"
+
+
+def national_days(code, year):
+    return {r["date"] for r in HOL[code].get(str(year), [])
+            if r["global"] and "Public" in r["types"]}
+
+
+hol_24 = {c: len(national_days(c, 2024)) for c, y in HOL.items() if "2024" in y}
+hol_kr = hol_24["KR"]
+hol_top = sorted(hol_24.items(), key=lambda kv: -kv[1])
+# 같은 값은 공동 순위: 한국보다 많은 곳의 수 + 1
+hol_more = sum(1 for v in hol_24.values() if v > hol_kr)
+hol_rank = hol_more + 1
+hol_tied = sum(1 for v in hol_24.values() if v == hol_kr)
+hol_avg = mean(hol_24.values())
+hol_name = {"SV": "엘살바도르", "KH": "캄보디아", "PR": "푸에르토리코"}
+# 보기는 상위 세 곳 + 한국. 1위가 동점이거나 3위 동점이 잘리면 보기를 다시 정해야 한다
+assert hol_top[0][1] > hol_top[1][1] and hol_top[2][1] > hol_top[3][1]
+hol_top3 = [hol_name[c] for c, _ in hol_top[:3]]
+hol_under10 = sum(1 for v in hol_24.values() if v < 10)
+hol_exact10 = sum(1 for v in hol_24.values() if v == 10)
+
+topic(
+    "holidays", "📅", "빨간 날은 며칠일까",
+    "2024년 나라·지역별 전국 공휴일과 한국의 순위",
+    "Nager.Date 공휴일 API", "https://date.nager.at",
+    [
+        slider("d1", "\"빨간 날만 기다린다!\" Nager.Date 자료 목록 기준, 2024년 한국의 "
+               f"전국 공휴일({HOL_RULE})은 며칠이었을까요?",
+               hol_kr, "일", 5, 25, 1,
+               f"2024년 한국 자료에서 global 이 true 이고 types 에 Public 이 있는 항목을 "
+               f"같은 날짜는 한 번만 세면 {hol_kr}일",
+               "달력의 빨간 날은 해마다 다릅니다. 자료 목록과 실제 쉬는 날도 "
+               "같지 않을 수 있습니다."),
+        choice("d2", "이 나라·지역으로 이직하고 싶다! 2024년, 자료에 있는 나라·지역 가운데 "
+               f"전국 공휴일({HOL_RULE})이 가장 많은 나라·지역은 어디일까요?",
+               ["한국", *sorted(hol_top3)], hol_name[hol_top[0][0]],
+               f"2024년 자료가 있는 {len(hol_24)}곳에서 global 이 true 이고 types 에 Public 이 "
+               f"있는 날짜를 곳마다 같은 날짜는 한 번만 세면 1위는 "
+               f"{hol_name[hol_top[0][0]]} {hol_top[0][1]}일",
+               "공휴일이 많은 곳으로 먼저 떠올리는 나라와 자료의 1위는 다를 수 "
+               "있습니다."),
+        slider("d3", "우리나라 빨간 날, 세계에서 어느 정도일까? 2024년, 자료에 있는 나라·지역 "
+               f"가운데 한국은 전국 공휴일({HOL_RULE}) 수로 몇 위일까요?",
+               hol_rank, "위", 1, 60, 1,
+               f"2024년 자료가 있는 {len(hol_24)}곳을 global 이 true 이고 types 에 Public 이 "
+               f"있는 날짜 수(같은 날짜는 한 번만)로 비교하면 "
+               f"한국({hol_kr}일)보다 많은 곳이 {hol_more}곳이라 한국 포함 {hol_tied}곳이 "
+               f"공동 {hol_rank}위",
+               "'우리는 잘 못 쉰다'는 느낌과 목록의 순위는 다를 수 있습니다."),
+        slider("d4", "남들은 얼마나 쉴까? 2024년, 자료에 있는 나라·지역의 전국 공휴일"
+               f"({HOL_RULE})은 평균 며칠일까요?",
+               hol_avg, "일", 0, 25, 0.1,
+               f"2024년 자료가 있는 {len(hol_24)}곳에서 global 이 true 이고 types 에 Public 이 "
+               f"있는 날짜를 곳마다 같은 날짜는 한 번만 세어 평균하면 {hol_avg:.2f}일",
+               "한국을 기준점으로 삼으면 세계 평균을 비슷하게 잡기 쉽습니다."),
+        slider("d5", "쉬는 날 왜 이리 없어? 2024년, 자료에 있는 나라·지역 가운데 전국 공휴일"
+               f"({HOL_RULE})이 10일 미만인 곳은 몇 곳일까요?",
+               hol_under10, "곳", 0, 100, 1,
+               f"2024년 자료가 있는 {len(hol_24)}곳에서 global 이 true 이고 types 에 Public 이 "
+               f"있는 날짜를 곳마다 같은 날짜는 한 번만 세어 10일 미만인 곳을 세면 "
+               f"{hol_under10}곳",
+               f"전국 공휴일이 정확히 10일인 곳이 {hol_exact10}곳이라, 기준을 '10일 이하'로 "
+               f"하루만 넓혀도 답은 {hol_under10}곳에서 {hol_under10 + hol_exact10}곳이 "
+               "됩니다."),
+    ],
+    caveat="이 숫자는 Nager.Date 목록에서 Public 으로 표시된 전국 공휴일만 센 값이라 선거일과 "
+           "임시공휴일이 빠져 있고, 받지 못한 그레나다·가이아나·시리아·남아공은 비교에서 "
+           "빠졌으며, 지역 공휴일이 많은 연방 국가는 낮게 잡혀 정부 달력이나 뉴스의 숫자와 "
+           "다를 수 있습니다.")
+
 
 # ════════════════════════════════════════════════════════════════
 def main() -> None:

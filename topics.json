@@ -127,6 +127,13 @@
       "title": "서울의 눈",
       "blurb": "1990년부터 2024년까지, 서울의 하루 강설량",
       "source": "Open-Meteo Archive (ERA5 재분석)"
+    },
+    {
+      "id": "holidays",
+      "emoji": "📅",
+      "title": "빨간 날은 며칠일까",
+      "blurb": "2024년 나라·지역별 전국 공휴일과 한국의 순위",
+      "source": "Nager.Date 공휴일 API"
     }
   ]
 }
